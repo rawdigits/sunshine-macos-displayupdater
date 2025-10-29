@@ -264,23 +264,37 @@ def restart_sunshine():
     if sunshine_service:
         try:
             # Always use restart, even if stopped - brew will handle it
+            # Give it 60 seconds timeout as it can take a while
             result = subprocess.run(
                 ["brew", "services", "restart", sunshine_service],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=60
             )
             if result.returncode == 0:
                 return True, f"Restarted via brew services ({sunshine_service})"
 
+            # Log the error for debugging
+            if result.stderr:
+                print(f"brew services restart stderr: {result.stderr}", file=sys.stderr)
+
             # If restart failed, try stop then start
-            subprocess.run(["brew", "services", "stop", sunshine_service], capture_output=True)
+            subprocess.run(["brew", "services", "stop", sunshine_service],
+                         capture_output=True, timeout=30)
             result = subprocess.run(
                 ["brew", "services", "start", sunshine_service],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=30
             )
             if result.returncode == 0:
                 return True, f"Force restarted via brew services ({sunshine_service})"
+
+            if result.stderr:
+                print(f"brew services start stderr: {result.stderr}", file=sys.stderr)
+
+        except subprocess.TimeoutExpired:
+            print(f"Warning: brew services timed out, trying fallback methods", file=sys.stderr)
         except FileNotFoundError:
             pass
         except Exception as e:
