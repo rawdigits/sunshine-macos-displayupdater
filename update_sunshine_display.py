@@ -105,8 +105,8 @@ def update_sunshine_config(display_id):
 
 def restart_sunshine():
     """Attempt to restart Sunshine service."""
+    # Try to restart via brew services
     try:
-        # Try to restart via brew services
         result = subprocess.run(
             ["brew", "services", "restart", "sunshine"],
             capture_output=True,
@@ -117,10 +117,47 @@ def restart_sunshine():
     except FileNotFoundError:
         pass
 
-    # Try to find and kill sunshine process
+    # Try to restart via launchctl (if installed via homebrew)
+    try:
+        result = subprocess.run(
+            ["launchctl", "kickstart", "-k", "gui/$(id -u)/homebrew.mxcl.sunshine"],
+            capture_output=True,
+            text=True,
+            shell=True
+        )
+        if result.returncode == 0:
+            return True, "Restarted via launchctl kickstart"
+    except Exception:
+        pass
+
+    # Try to find and kill/restart sunshine process via launchctl
+    try:
+        # Get current user ID
+        result = subprocess.run(["id", "-u"], capture_output=True, text=True)
+        uid = result.stdout.strip()
+
+        # Stop the service
+        subprocess.run(
+            ["launchctl", "stop", f"gui/{uid}/homebrew.mxcl.sunshine"],
+            capture_output=True
+        )
+
+        # Start the service
+        result = subprocess.run(
+            ["launchctl", "start", f"gui/{uid}/homebrew.mxcl.sunshine"],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            return True, "Restarted via launchctl stop/start"
+    except Exception:
+        pass
+
+    # Last resort: kill the process (will auto-restart if managed by launchd)
     try:
         subprocess.run(["pkill", "-x", "sunshine"], check=False)
-        return True, "Sent kill signal to sunshine process"
+        return True, "Sent kill signal (service should auto-restart)"
     except Exception as e:
         return False, f"Could not restart: {e}"
 
