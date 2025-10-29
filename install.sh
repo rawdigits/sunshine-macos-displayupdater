@@ -5,7 +5,7 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PLIST_NAME="com.sunshine.displayupdater.plist"
-PLIST_SOURCE="$SCRIPT_DIR/$PLIST_NAME"
+PLIST_TEMPLATE="$SCRIPT_DIR/example/$PLIST_NAME"
 PLIST_DEST="$HOME/Library/LaunchAgents/$PLIST_NAME"
 
 echo "Sunshine Display Updater - Installation"
@@ -40,9 +40,9 @@ echo "Installing launchd agent..."
 # Create LaunchAgents directory if it doesn't exist
 mkdir -p "$HOME/Library/LaunchAgents"
 
-# Copy plist file
-cp "$PLIST_SOURCE" "$PLIST_DEST"
-echo "  Copied plist to $PLIST_DEST"
+# Generate plist file with actual paths
+sed "s|INSTALL_DIR|$SCRIPT_DIR|g" "$PLIST_TEMPLATE" > "$PLIST_DEST"
+echo "  Created plist at $PLIST_DEST"
 
 # Unload if already loaded
 launchctl unload "$PLIST_DEST" 2>/dev/null || true

@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/rhuber/sunshinedisplay/auto_update_sunshine_display.py</string>
+        <string>INSTALL_DIR/auto_update_sunshine_display.py</string>
     </array>
 
     <key>StartInterval</key>
@@ -18,10 +18,10 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/rhuber/sunshinedisplay/update.log</string>
+    <string>INSTALL_DIR/update.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/rhuber/sunshinedisplay/update.error.log</string>
+    <string>INSTALL_DIR/update.error.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
