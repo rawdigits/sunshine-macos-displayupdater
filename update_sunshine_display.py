@@ -404,6 +404,8 @@ def cmd_update(args):
 def cmd_watch(args):
     """Monitor mode - continuously watch and update when display changes."""
     import time
+    import threading
+    import queue
 
     config = load_config()
     if not config:
@@ -417,8 +419,10 @@ def cmd_watch(args):
         return 1
 
     check_interval = config.get("check_interval_seconds", 60)
+    fast_poll_interval = config.get("fast_poll_interval_seconds", 1.0)
     no_restart = args.no_restart or config.get("no_auto_restart", False)
     daemon_mode = args.daemon
+    use_events = daemon_mode  # Only use events in daemon mode
 
     if daemon_mode:
         # Force unbuffered output for logs
@@ -427,11 +431,17 @@ def cmd_watch(args):
 
         print(f"Starting Sunshine Display Manager daemon")
         print(f"Target display: {target_display_name}")
-        print(f"Check interval: {check_interval} seconds")
+        print(f"Check mode: {'Fast polling + periodic check' if use_events else 'Periodic check only'}")
+        print(f"Fast poll interval: {fast_poll_interval} seconds" if use_events else "")
+        print(f"Full check interval: {check_interval} seconds")
         print(f"Auto-restart: {'disabled' if no_restart else 'enabled'}")
         print()
 
-    while True:
+    # Queue for display change events
+    event_queue = queue.Queue()
+
+    def check_and_update():
+        """Check for display changes and update if needed."""
         try:
             # Ensure Sunshine is running
             success, message = ensure_sunshine_running()
@@ -445,8 +455,7 @@ def cmd_watch(args):
 
             if not display:
                 print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Warning: Display '{target_display_name}' not found", file=sys.stderr)
-                time.sleep(check_interval)
-                continue
+                return
 
             # Check if update is needed
             current_id = get_current_sunshine_display()
@@ -465,21 +474,85 @@ def cmd_watch(args):
                         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}")
                     else:
                         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Warning: {message}", file=sys.stderr)
-
-            # Exit if not daemon mode, otherwise sleep until next check
-            if not daemon_mode:
-                return 0
-
-            time.sleep(check_interval)
-
-        except KeyboardInterrupt:
-            print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Shutting down...")
-            return 0
         except Exception as e:
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error: {e}", file=sys.stderr)
-            if not daemon_mode:
-                return 1
-            time.sleep(check_interval)
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error in check_and_update: {e}", file=sys.stderr)
+
+    # Set up display monitoring
+    last_display_list = None
+    fast_polling_enabled = False
+
+    if use_events:
+        try:
+            from Quartz import CGGetActiveDisplayList
+
+            # Get initial display list
+            def get_display_list():
+                """Get list of active display IDs."""
+                try:
+                    max_displays = 32
+                    (err, active_displays, display_count) = CGGetActiveDisplayList(max_displays, None, None)
+                    if err == 0:
+                        return tuple(sorted(active_displays[:display_count]))
+                    return None
+                except Exception:
+                    return None
+
+            last_display_list = get_display_list()
+            fast_polling_enabled = True
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Fast display change detection enabled")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] DEBUG: Initial display list: {last_display_list}")
+            sys.stdout.flush()
+
+        except ImportError:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Warning: Quartz not available, using polling only", file=sys.stderr)
+        except Exception as e:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Warning: Display monitoring setup failed: {e}", file=sys.stderr)
+
+    # Initial check
+    check_and_update()
+
+    if not daemon_mode:
+        return 0
+
+    # Main loop
+    try:
+        last_check_time = time.time()
+        last_fast_check_time = time.time()
+
+        while True:
+            try:
+                # Fast polling: check for display list changes at configured interval
+                if fast_polling_enabled:
+                    current_time = time.time()
+                    if current_time - last_fast_check_time >= fast_poll_interval:
+                        current_display_list = get_display_list()
+                        if current_display_list != last_display_list and current_display_list is not None:
+                            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Display list changed: {last_display_list} -> {current_display_list}")
+                            sys.stdout.flush()
+                            last_display_list = current_display_list
+                            # Small delay to let system settle
+                            time.sleep(0.5)
+                            check_and_update()
+                            last_check_time = time.time()
+                        last_fast_check_time = current_time
+
+                # Do full periodic check if enough time has elapsed
+                current_time = time.time()
+                if current_time - last_check_time >= check_interval:
+                    check_and_update()
+                    last_check_time = current_time
+
+                # Sleep briefly to avoid busy loop (use smaller of fast_poll_interval/2 or 0.5)
+                sleep_time = min(fast_poll_interval / 2, 0.5) if fast_polling_enabled else 0.5
+                time.sleep(sleep_time)
+
+            except Exception as e:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error in main loop: {e}", file=sys.stderr)
+                time.sleep(5)
+
+    except KeyboardInterrupt:
+        print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Shutting down...")
+        return 0
 
 
 def main():

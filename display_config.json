@@ -1,4 +1,5 @@
 {
   "target_display": "Virtual 16:9",
-  "check_interval_seconds": 30
+  "check_interval_seconds": 30,
+  "fast_poll_interval_seconds": 1.0
 }
