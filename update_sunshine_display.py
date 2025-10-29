@@ -103,32 +103,106 @@ def update_sunshine_config(display_id):
     return config_path
 
 
-def restart_sunshine():
-    """Attempt to restart Sunshine service."""
-    # Try to restart via brew services
+def detect_sunshine_service():
+    """Detect which sunshine service is installed."""
     try:
         result = subprocess.run(
-            ["brew", "services", "restart", "sunshine"],
+            ["brew", "services", "list"],
             capture_output=True,
             text=True
         )
-        if result.returncode == 0:
-            return True, "Restarted via brew services"
-    except FileNotFoundError:
-        pass
-
-    # Try to restart via launchctl (if installed via homebrew)
-    try:
-        result = subprocess.run(
-            ["launchctl", "kickstart", "-k", "gui/$(id -u)/homebrew.mxcl.sunshine"],
-            capture_output=True,
-            text=True,
-            shell=True
-        )
-        if result.returncode == 0:
-            return True, "Restarted via launchctl kickstart"
+        if "sunshine-beta" in result.stdout:
+            return "sunshine-beta"
+        elif "sunshine" in result.stdout:
+            return "sunshine"
     except Exception:
         pass
+    return None
+
+
+def is_sunshine_running():
+    """Check if Sunshine process is currently running."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-x", "sunshine"],
+            capture_output=True
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def ensure_sunshine_running():
+    """Ensure Sunshine service is running, start it if not."""
+    if is_sunshine_running():
+        return True, "Sunshine already running"
+
+    # Sunshine is not running, try to start it
+    sunshine_service = detect_sunshine_service()
+
+    # Try to start via brew services
+    if sunshine_service:
+        try:
+            result = subprocess.run(
+                ["brew", "services", "start", sunshine_service],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return True, f"Started via brew services ({sunshine_service})"
+        except Exception:
+            pass
+
+    # Try to start via launchctl
+    try:
+        result = subprocess.run(["id", "-u"], capture_output=True, text=True)
+        uid = result.stdout.strip()
+
+        for service_name in ["homebrew.mxcl.sunshine-beta", "homebrew.mxcl.sunshine"]:
+            result = subprocess.run(
+                ["launchctl", "start", f"gui/{uid}/{service_name}"],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return True, f"Started via launchctl ({service_name})"
+    except Exception:
+        pass
+
+    return False, "Could not start Sunshine"
+
+
+def restart_sunshine():
+    """Attempt to restart Sunshine service."""
+    # Detect which version is installed (sunshine or sunshine-beta)
+    sunshine_service = detect_sunshine_service()
+
+    # Try to restart via brew services
+    if sunshine_service:
+        try:
+            result = subprocess.run(
+                ["brew", "services", "restart", sunshine_service],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return True, f"Restarted via brew services ({sunshine_service})"
+        except FileNotFoundError:
+            pass
+
+    # Try to restart via launchctl (if installed via homebrew)
+    for service_name in ["homebrew.mxcl.sunshine-beta", "homebrew.mxcl.sunshine"]:
+        try:
+            result = subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/$(id -u)/{service_name}"],
+                capture_output=True,
+                text=True,
+                shell=True
+            )
+            if result.returncode == 0:
+                return True, f"Restarted via launchctl kickstart ({service_name})"
+        except Exception:
+            pass
 
     # Try to find and kill/restart sunshine process via launchctl
     try:
@@ -136,21 +210,22 @@ def restart_sunshine():
         result = subprocess.run(["id", "-u"], capture_output=True, text=True)
         uid = result.stdout.strip()
 
-        # Stop the service
-        subprocess.run(
-            ["launchctl", "stop", f"gui/{uid}/homebrew.mxcl.sunshine"],
-            capture_output=True
-        )
+        for service_name in ["homebrew.mxcl.sunshine-beta", "homebrew.mxcl.sunshine"]:
+            # Stop the service
+            stop_result = subprocess.run(
+                ["launchctl", "stop", f"gui/{uid}/{service_name}"],
+                capture_output=True
+            )
 
-        # Start the service
-        result = subprocess.run(
-            ["launchctl", "start", f"gui/{uid}/homebrew.mxcl.sunshine"],
-            capture_output=True,
-            text=True
-        )
+            # Start the service
+            start_result = subprocess.run(
+                ["launchctl", "start", f"gui/{uid}/{service_name}"],
+                capture_output=True,
+                text=True
+            )
 
-        if result.returncode == 0:
-            return True, "Restarted via launchctl stop/start"
+            if start_result.returncode == 0:
+                return True, f"Restarted via launchctl stop/start ({service_name})"
     except Exception:
         pass
 

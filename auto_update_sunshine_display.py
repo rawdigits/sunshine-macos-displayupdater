@@ -12,7 +12,7 @@ from pathlib import Path
 
 # Import the main update script functions
 sys.path.insert(0, str(Path(__file__).parent))
-from update_sunshine_display import find_display_by_name, update_sunshine_config, restart_sunshine
+from update_sunshine_display import find_display_by_name, update_sunshine_config, restart_sunshine, ensure_sunshine_running
 
 
 def get_config_path():
@@ -73,6 +73,13 @@ def main():
     config = load_config()
     target_display_name = config["target_display"]
     no_restart = "--no-restart" in sys.argv or config.get("no_auto_restart", False)
+
+    # First, ensure Sunshine is running
+    success, message = ensure_sunshine_running()
+    if not success:
+        print(f"Warning: {message}", file=sys.stderr)
+    elif "Started" in message:
+        print(f"Sunshine was not running - {message}")
 
     print(f"Target display: {target_display_name}")
 
