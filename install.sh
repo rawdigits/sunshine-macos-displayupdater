@@ -1,0 +1,66 @@
+#!/bin/bash
+# Installation script for Sunshine Display Updater
+
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PLIST_NAME="com.sunshine.displayupdater.plist"
+PLIST_SOURCE="$SCRIPT_DIR/$PLIST_NAME"
+PLIST_DEST="$HOME/Library/LaunchAgents/$PLIST_NAME"
+
+echo "Sunshine Display Updater - Installation"
+echo "========================================"
+echo
+
+# Check if config exists
+if [ ! -f "$SCRIPT_DIR/display_config.json" ]; then
+    echo "Error: display_config.json not found!"
+    echo "Please create it with your target display name."
+    echo
+    echo "Example:"
+    echo '  {"target_display": "Virtual 16:9"}'
+    exit 1
+fi
+
+# Test the script
+echo "Testing configuration..."
+if ! python3 "$SCRIPT_DIR/auto_update_sunshine_display.py" --no-restart; then
+    echo
+    echo "Error: Script test failed. Please check your configuration."
+    exit 1
+fi
+
+echo
+echo "Configuration test successful!"
+echo
+
+# Install launchd agent
+echo "Installing launchd agent..."
+
+# Create LaunchAgents directory if it doesn't exist
+mkdir -p "$HOME/Library/LaunchAgents"
+
+# Copy plist file
+cp "$PLIST_SOURCE" "$PLIST_DEST"
+echo "  Copied plist to $PLIST_DEST"
+
+# Unload if already loaded
+launchctl unload "$PLIST_DEST" 2>/dev/null || true
+
+# Load the agent
+launchctl load "$PLIST_DEST"
+echo "  Loaded launchd agent"
+
+echo
+echo "Installation complete!"
+echo
+echo "The display updater will now run:"
+echo "  - Every 60 seconds"
+echo "  - At system boot"
+echo
+echo "Logs are saved to:"
+echo "  - $SCRIPT_DIR/update.log"
+echo "  - $SCRIPT_DIR/update.error.log"
+echo
+echo "To uninstall, run:"
+echo "  ./uninstall.sh"
