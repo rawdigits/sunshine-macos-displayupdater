@@ -1,4 +1,4 @@
 {
   "target_display": "Virtual 16:9",
-  "check_interval_seconds": 300
+  "check_interval_seconds": 30
 }

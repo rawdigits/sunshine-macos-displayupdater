@@ -4,7 +4,7 @@
 
 1. **Check your current display setup:**
    ```bash
-   ./update_sunshine_display.py
+   ./update_sunshine_display.py list
    ```
 
    This will show you all available displays. Note the name of the display you want to use.
@@ -36,12 +36,12 @@ That's it! The system will now automatically update Sunshine whenever your displ
 
 To test the manual update:
 ```bash
-./update_sunshine_display.py "Virtual 16:9"
+./update_sunshine_display.py update "Virtual 16:9"
 ```
 
 To see the auto-updater in action:
 ```bash
-./auto_update_sunshine_display.py
+./update_sunshine_display.py watch
 ```
 
 ## Logs
@@ -60,7 +60,7 @@ tail -f update.log
 ## Troubleshooting
 
 **Problem**: Display not found
-- Run `./update_sunshine_display.py` to see exact display names
+- Run `./update_sunshine_display.py list` to see exact display names
 - The name matching is case-insensitive and supports partial matches
 
 **Problem**: Sunshine not restarting automatically

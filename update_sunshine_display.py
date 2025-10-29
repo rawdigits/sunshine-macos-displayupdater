@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Sunshine Display Updater
+Sunshine Display Manager
 Automatically updates Sunshine's display configuration based on display name.
 """
 
+import argparse
 import json
 import os
 import re
@@ -12,37 +13,94 @@ import sys
 from pathlib import Path
 
 
-def get_displays():
-    """Get all displays from system_profiler."""
+def get_config_path():
+    """Get path to display config file."""
+    script_dir = Path(__file__).parent
+    return script_dir / "display_config.json"
+
+
+def load_config():
+    """Load configuration from JSON file."""
+    config_path = get_config_path()
+
+    if not config_path.exists():
+        return None
+
     try:
-        result = subprocess.run(
-            ["system_profiler", "SPDisplaysDataType", "-json"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        data = json.loads(result.stdout)
-
-        displays = []
-        for gpu in data.get("SPDisplaysDataType", []):
-            for display in gpu.get("spdisplays_ndrvs", []):
-                display_info = {
-                    "name": display.get("_name", "Unknown"),
-                    "id": display.get("_spdisplays_displayID", ""),
-                    "resolution": display.get("_spdisplays_resolution", ""),
-                    "pixels": display.get("_spdisplays_pixels", ""),
-                    "is_main": display.get("spdisplays_main") == "spdisplays_yes",
-                    "is_online": display.get("spdisplays_online") == "spdisplays_yes"
-                }
-                displays.append(display_info)
-
-        return displays
-    except subprocess.CalledProcessError as e:
-        print(f"Error running system_profiler: {e}", file=sys.stderr)
-        return []
+        with open(config_path, 'r') as f:
+            return json.load(f)
     except json.JSONDecodeError as e:
-        print(f"Error parsing system_profiler output: {e}", file=sys.stderr)
-        return []
+        print(f"Error parsing config file: {e}", file=sys.stderr)
+        return None
+
+
+def get_displays(retries=3, retry_delay=0.5):
+    """Get all displays from system_profiler with retries."""
+    import time
+
+    for attempt in range(retries):
+        try:
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType", "-json"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10
+            )
+
+            if not result.stdout.strip():
+                if attempt < retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return []
+
+            data = json.loads(result.stdout)
+
+            displays = []
+            for gpu in data.get("SPDisplaysDataType", []):
+                for display in gpu.get("spdisplays_ndrvs", []):
+                    display_id_str = display.get("_spdisplays_displayID", "")
+                    # Convert hex display ID to decimal for Sunshine config
+                    # macOS may return hex (e.g., "a" for 10)
+                    try:
+                        display_id = str(int(display_id_str, 16))
+                    except ValueError:
+                        # If it's not hex, use as-is (already decimal)
+                        display_id = display_id_str
+
+                    display_info = {
+                        "name": display.get("_name", "Unknown"),
+                        "id": display_id,
+                        "resolution": display.get("_spdisplays_resolution", ""),
+                        "pixels": display.get("_spdisplays_pixels", ""),
+                        "is_main": display.get("spdisplays_main") == "spdisplays_yes",
+                        "is_online": display.get("spdisplays_online") == "spdisplays_yes"
+                    }
+                    displays.append(display_info)
+
+            if displays or attempt >= retries - 1:
+                return displays
+
+            # If no displays found, retry
+            time.sleep(retry_delay)
+
+        except subprocess.CalledProcessError as e:
+            print(f"Error running system_profiler: {e}", file=sys.stderr)
+            if attempt >= retries - 1:
+                return []
+            time.sleep(retry_delay)
+        except subprocess.TimeoutExpired:
+            print(f"system_profiler timed out (attempt {attempt + 1}/{retries})", file=sys.stderr)
+            if attempt >= retries - 1:
+                return []
+            time.sleep(retry_delay)
+        except json.JSONDecodeError as e:
+            print(f"Error parsing system_profiler output: {e}", file=sys.stderr)
+            if attempt >= retries - 1:
+                return []
+            time.sleep(retry_delay)
+
+    return []
 
 
 def find_display_by_name(display_name):
@@ -103,21 +161,46 @@ def update_sunshine_config(display_id):
     return config_path
 
 
+def get_current_sunshine_display():
+    """Get the currently configured display ID from Sunshine."""
+    config_path = get_sunshine_config_path()
+
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, 'r') as f:
+            content = f.read()
+
+        match = re.search(r'^output_name\s*=\s*(\S+)', content, re.MULTILINE)
+        if match:
+            return match.group(1)
+    except Exception as e:
+        print(f"Warning: Could not read current config: {e}", file=sys.stderr)
+
+    return None
+
+
 def detect_sunshine_service():
-    """Detect which sunshine service is installed."""
+    """Detect which sunshine service is installed and check if it's running."""
     try:
         result = subprocess.run(
             ["brew", "services", "list"],
             capture_output=True,
             text=True
         )
-        if "sunshine-beta" in result.stdout:
-            return "sunshine-beta"
-        elif "sunshine" in result.stdout:
-            return "sunshine"
+        lines = result.stdout.split('\n')
+        for line in lines:
+            if "sunshine-beta" in line:
+                # Only "started" means running, everything else (stopped/none/error) means dead
+                is_running = "started" in line
+                return ("sunshine-beta", is_running)
+            elif "sunshine" in line and "sunshine-beta" not in line:
+                is_running = "started" in line
+                return ("sunshine", is_running)
     except Exception:
         pass
-    return None
+    return (None, False)
 
 
 def is_sunshine_running():
@@ -138,7 +221,7 @@ def ensure_sunshine_running():
         return True, "Sunshine already running"
 
     # Sunshine is not running, try to start it
-    sunshine_service = detect_sunshine_service()
+    sunshine_service, is_running = detect_sunshine_service()
 
     # Try to start via brew services
     if sunshine_service:
@@ -153,14 +236,14 @@ def ensure_sunshine_running():
         except Exception:
             pass
 
-    # Try to start via launchctl
+    # Try to start via launchctl kickstart (works even if already running)
     try:
         result = subprocess.run(["id", "-u"], capture_output=True, text=True)
         uid = result.stdout.strip()
 
         for service_name in ["homebrew.mxcl.sunshine-beta", "homebrew.mxcl.sunshine"]:
             result = subprocess.run(
-                ["launchctl", "start", f"gui/{uid}/{service_name}"],
+                ["launchctl", "kickstart", f"gui/{uid}/{service_name}"],
                 capture_output=True,
                 text=True
             )
@@ -173,13 +256,14 @@ def ensure_sunshine_running():
 
 
 def restart_sunshine():
-    """Attempt to restart Sunshine service."""
+    """Attempt to restart Sunshine service, forcing brew services restart."""
     # Detect which version is installed (sunshine or sunshine-beta)
-    sunshine_service = detect_sunshine_service()
+    sunshine_service, is_running = detect_sunshine_service()
 
-    # Try to restart via brew services
+    # Always force restart via brew services
     if sunshine_service:
         try:
+            # Always use restart, even if stopped - brew will handle it
             result = subprocess.run(
                 ["brew", "services", "restart", sunshine_service],
                 capture_output=True,
@@ -187,8 +271,20 @@ def restart_sunshine():
             )
             if result.returncode == 0:
                 return True, f"Restarted via brew services ({sunshine_service})"
+
+            # If restart failed, try stop then start
+            subprocess.run(["brew", "services", "stop", sunshine_service], capture_output=True)
+            result = subprocess.run(
+                ["brew", "services", "start", sunshine_service],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return True, f"Force restarted via brew services ({sunshine_service})"
         except FileNotFoundError:
             pass
+        except Exception as e:
+            print(f"Warning: brew services failed: {e}", file=sys.stderr)
 
     # Try to restart via launchctl (if installed via homebrew)
     for service_name in ["homebrew.mxcl.sunshine-beta", "homebrew.mxcl.sunshine"]:
@@ -232,25 +328,27 @@ def restart_sunshine():
     # Last resort: kill the process (will auto-restart if managed by launchd)
     try:
         subprocess.run(["pkill", "-x", "sunshine"], check=False)
-        return True, "Sent kill signal (service should auto-restart)"
+        return True, "Force killed (service should auto-restart via launchd)"
     except Exception as e:
         return False, f"Could not restart: {e}"
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: update_sunshine_display.py <display_name> [--no-restart]")
-        print("\nAvailable displays:")
-        displays = get_displays()
-        for display in displays:
-            status = " (main)" if display["is_main"] else ""
-            online = " [online]" if display["is_online"] else " [offline]"
-            print(f"  - {display['name']}{status}{online}")
-            print(f"    ID: {display['id']}, Resolution: {display['resolution']}")
-        sys.exit(1)
+def cmd_list(args):
+    """List all available displays."""
+    print("Available displays:")
+    displays = get_displays()
+    for display in displays:
+        status = " (main)" if display["is_main"] else ""
+        online = " [online]" if display["is_online"] else " [offline]"
+        print(f"  - {display['name']}{status}{online}")
+        print(f"    ID: {display['id']}, Resolution: {display['resolution']}")
+    return 0
 
-    display_name = sys.argv[1]
-    no_restart = "--no-restart" in sys.argv
+
+def cmd_update(args):
+    """Update Sunshine configuration for a specific display."""
+    display_name = args.display_name
+    no_restart = args.no_restart
 
     # Find the display
     display = find_display_by_name(display_name)
@@ -261,7 +359,7 @@ def main():
         displays = get_displays()
         for d in displays:
             print(f"  - {d['name']} (ID: {d['id']})", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     print(f"Found display: {display['name']}")
     print(f"  ID: {display['id']}")
@@ -286,6 +384,124 @@ def main():
         print("\nSkipped restart (--no-restart specified)")
         print("Remember to restart Sunshine for changes to take effect")
 
+    return 0
+
+
+def cmd_watch(args):
+    """Monitor mode - continuously watch and update when display changes."""
+    import time
+
+    config = load_config()
+    if not config:
+        print("Error: display_config.json not found!", file=sys.stderr)
+        print("Please create it with your target display name.", file=sys.stderr)
+        return 1
+
+    target_display_name = config.get("target_display")
+    if not target_display_name:
+        print("Error: 'target_display' not specified in config", file=sys.stderr)
+        return 1
+
+    check_interval = config.get("check_interval_seconds", 60)
+    no_restart = args.no_restart or config.get("no_auto_restart", False)
+    daemon_mode = args.daemon
+
+    if daemon_mode:
+        # Force unbuffered output for logs
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+
+        print(f"Starting Sunshine Display Manager daemon")
+        print(f"Target display: {target_display_name}")
+        print(f"Check interval: {check_interval} seconds")
+        print(f"Auto-restart: {'disabled' if no_restart else 'enabled'}")
+        print()
+
+    while True:
+        try:
+            # Ensure Sunshine is running
+            success, message = ensure_sunshine_running()
+            if not success:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Warning: {message}", file=sys.stderr)
+            elif "Started" in message:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Sunshine was not running - {message}")
+
+            # Find the display
+            display = find_display_by_name(target_display_name)
+
+            if not display:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Warning: Display '{target_display_name}' not found", file=sys.stderr)
+                time.sleep(check_interval)
+                continue
+
+            # Check if update is needed
+            current_id = get_current_sunshine_display()
+            if current_id != display['id']:
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Display ID changed: {current_id} -> {display['id']}")
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Updating configuration for {display['name']} (ID: {display['id']})")
+
+                # Update Sunshine config
+                config_path = update_sunshine_config(display['id'])
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Updated {config_path}")
+
+                # Restart Sunshine if requested
+                if not no_restart:
+                    success, message = restart_sunshine()
+                    if success:
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+                    else:
+                        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Warning: {message}", file=sys.stderr)
+
+            # Exit if not daemon mode, otherwise sleep until next check
+            if not daemon_mode:
+                return 0
+
+            time.sleep(check_interval)
+
+        except KeyboardInterrupt:
+            print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Shutting down...")
+            return 0
+        except Exception as e:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error: {e}", file=sys.stderr)
+            if not daemon_mode:
+                return 1
+            time.sleep(check_interval)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Sunshine Display Manager - Manage display configuration for Sunshine"
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+
+    # List command
+    list_parser = subparsers.add_parser('list', help='List all available displays')
+    list_parser.set_defaults(func=cmd_list)
+
+    # Update command
+    update_parser = subparsers.add_parser('update', help='Update display configuration')
+    update_parser.add_argument('display_name', help='Name of the display to use')
+    update_parser.add_argument('--no-restart', action='store_true',
+                               help='Do not restart Sunshine after update')
+    update_parser.set_defaults(func=cmd_update)
+
+    # Watch command (daemon mode)
+    watch_parser = subparsers.add_parser('watch', help='Watch mode - check and update from config')
+    watch_parser.add_argument('--no-restart', action='store_true',
+                             help='Do not restart Sunshine after update')
+    watch_parser.add_argument('--daemon', action='store_true',
+                             help='Run continuously as a daemon')
+    watch_parser.set_defaults(func=cmd_watch)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    return args.func(args)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

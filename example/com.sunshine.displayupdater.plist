@@ -8,11 +8,13 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>INSTALL_DIR/auto_update_sunshine_display.py</string>
+        <string>INSTALL_DIR/update_sunshine_display.py</string>
+        <string>watch</string>
+        <string>--daemon</string>
     </array>
 
-    <key>StartInterval</key>
-    <integer>60</integer>
+    <key>KeepAlive</key>
+    <true/>
 
     <key>RunAtLoad</key>
     <true/>

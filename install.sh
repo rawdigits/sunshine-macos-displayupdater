@@ -24,7 +24,7 @@ fi
 
 # Test the script
 echo "Testing configuration..."
-if ! python3 "$SCRIPT_DIR/auto_update_sunshine_display.py" --no-restart; then
+if ! python3 "$SCRIPT_DIR/update_sunshine_display.py" watch --no-restart; then
     echo
     echo "Error: Script test failed. Please check your configuration."
     exit 1
@@ -50,6 +50,19 @@ launchctl unload "$PLIST_DEST" 2>/dev/null || true
 # Load the agent
 launchctl load "$PLIST_DEST"
 echo "  Loaded launchd agent"
+
+# Apply the current configuration with restart
+echo
+echo "Applying configuration and restarting Sunshine..."
+# Get the target display from config
+TARGET_DISPLAY=$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/display_config.json'))['target_display'])")
+# Use the update command to force a restart
+if python3 "$SCRIPT_DIR/update_sunshine_display.py" update "$TARGET_DISPLAY"; then
+    echo "  Configuration applied successfully"
+else
+    echo "  Warning: Could not apply configuration automatically"
+    echo "  You may need to restart Sunshine manually"
+fi
 
 echo
 echo "Installation complete!"

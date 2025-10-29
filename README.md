@@ -55,11 +55,19 @@ This will:
 To manually update Sunshine's display configuration:
 
 ```bash
-./update_sunshine_display.py "Virtual 16:9"
+./update_sunshine_display.py update "Virtual 16:9"
 ```
 
 Options:
 - `--no-restart`: Don't restart Sunshine after updating
+
+### List Available Displays
+
+```bash
+./update_sunshine_display.py list
+```
+
+This will show all connected displays with their names, IDs, and resolutions.
 
 ### Check Current Status
 
@@ -75,14 +83,6 @@ View any errors:
 tail -f update.error.log
 ```
 
-### List Available Displays
-
-```bash
-./update_sunshine_display.py
-```
-
-This will show all connected displays with their names, IDs, and resolutions.
-
 ## How It Works
 
 1. **Display Detection**: Uses `system_profiler SPDisplaysDataType` to get all connected displays
@@ -97,28 +97,32 @@ Edit `display_config.json`:
 ```json
 {
   "target_display": "Virtual 16:9",
+  "check_interval_seconds": 30,
   "no_auto_restart": false
 }
 ```
 
 - `target_display`: The name of the display to use (required)
+- `check_interval_seconds`: How often to check for changes in seconds (default: 60)
 - `no_auto_restart`: Set to `true` to skip automatic Sunshine restarts
 
 ## Automatic Monitoring
 
 The launchd agent runs:
-- Every 60 seconds (configurable in the plist file)
+- At the interval specified in `display_config.json` (default: 60 seconds)
 - At login/boot time
 - In the background
 
-To modify the check interval, edit `com.sunshine.displayupdater.plist` and change the `StartInterval` value (in seconds).
+To modify the check interval, edit `check_interval_seconds` in `display_config.json` and reinstall.
 
 ## Files
 
-- `update_sunshine_display.py`: Manual update script
-- `auto_update_sunshine_display.py`: Automatic update script (used by launchd)
+- `update_sunshine_display.py`: Main script with all functionality
+  - `list`: List available displays
+  - `update`: Update configuration for a specific display
+  - `watch`: Monitor mode (used by launchd)
 - `display_config.json`: Configuration file
-- `com.sunshine.displayupdater.plist`: launchd agent definition
+- `example/com.sunshine.displayupdater.plist`: launchd agent template
 - `install.sh`: Installation script
 - `uninstall.sh`: Uninstallation script
 
